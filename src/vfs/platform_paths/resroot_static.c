@@ -1,0 +1,14 @@
+/*
+ * This software is licensed under the terms of the MIT License.
+ * See COPYING for further information.
+ * ---
+ * Copyright (c) 2011-2026, Lukas Weber <laochailan@web.de>.
+ * Copyright (c) 2012-2026, Andrei Alexeyev <akari@taisei-project.org>.
+ */
+
+#include "platform_paths.h"
+
+const char *vfs_platformpath_resroot(void) {
+	// NOTE: assumed to be an absolute path
+	return TAISEI_BUILDCONF_DATA_PATH;
+}

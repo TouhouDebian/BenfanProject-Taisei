@@ -1,0 +1,85 @@
+/*
+ * This software is licensed under the terms of the MIT License.
+ * See COPYING for further information.
+ * ---
+ * Copyright (c) 2011-2026, Lukas Weber <laochailan@web.de>.
+ * Copyright (c) 2012-2026, Andrei Alexeyev <akari@taisei-project.org>.
+ */
+
+#pragma once
+#include "taisei.h"
+
+#include "systime.h"
+#include "util/compat.h"
+#include "util/strbuf.h"
+
+#include <time.h>
+#include <SDL3/SDL.h>
+
+#define UNICODE_UNKNOWN 0xFFFD
+#define UNICODE_BOM_NATIVE  0xFEFF
+#define UNICODE_BOM_SWAPPED 0xFFFE
+#define UNICODE_ELLIPSIS 0x2026
+
+#undef strlcat
+#define strlcat SDL_strlcat
+
+#undef strlcpy
+#define strlcpy SDL_strlcpy
+
+#ifndef TAISEI_BUILDCONF_HAVE_STRTOK_R
+#undef strtok_r
+#define strtok_r _ts_strtok_r
+char *strtok_r(char *str, const char *delim, char **nextp);
+#endif
+
+#ifndef TAISEI_BUILDCONF_HAVE_MEMRCHR
+#undef memrchr
+#define memrchr _ts_memrchr
+void *memrchr(const void *s, int c, size_t n);
+#endif
+
+#ifndef TAISEI_BUILDCONF_HAVE_MEMMEM
+#undef memmem
+#define memmem _ts_memmem
+void *memmem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen)
+	attr_nonnull_all;
+#endif
+
+#undef strcasecmp
+#define strcasecmp SDL_strcasecmp
+
+// If str is null, return "(null)", otherwise return str.
+// Useful for string arguments to format functions, which technically must not be null.
+#define STRORNULL(str) ((str) ? (str) : "(null)")
+
+bool strendswith(const char *s, const char *e) attr_pure;
+bool strstartswith(const char *s, const char *p) attr_pure;
+bool strendswith_any(const char *s, const char **earray) attr_pure;
+bool strstartswith_any(const char *s, const char **earray) attr_pure;
+void stralloc(char **dest, const char *src);
+void expand_escape_sequences(char *str);
+
+uint32_t* ucs4chr(const uint32_t *ucs4, uint32_t chr);
+size_t ucs4len(const uint32_t *ucs4);
+
+size_t utf8_to_ucs4(const char *utf8, size_t bufsize, uint32_t buf[bufsize]) attr_nonnull(1, 3);
+
+int ucs4_to_utf8(size_t ucs4_len, const uint32_t *ucs4, StringBuffer *buf) attr_nonnull(2, 3);
+
+void format_huge_num(uint digits, uint64_t num, size_t bufsize, char buf[bufsize]);
+void hexdigest(const uint8_t *input, size_t input_size, char *output, size_t output_size);
+
+#define FILENAME_TIMESTAMP_MIN_BUF_SIZE 23
+size_t filename_timestamp(char *buf, size_t buf_size, const SystemTime time) attr_nonnull(1);
+
+/*
+ * Test if string matches a simple 'glob'-like pattern.
+ *
+ * Only '*' is supported as a metacharacter in the glob.
+ * '*' matches zero or more characters lazily.
+ * If the glob is not empty and does not end with a *, the last segment is matched greedily.
+ * An empty glob matches everything.
+ */
+bool strnmatch(size_t globsize, const char glob[globsize], size_t insize, const char input[insize]);
+bool strmatch(const char *glob, const char *input);

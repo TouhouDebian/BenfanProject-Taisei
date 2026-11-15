@@ -1,0 +1,35 @@
+name: Deploy Benfan playable editions
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag containing benfan-web.zip
+        required: true
+        default: v0.1.0
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: benfan-pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download tested WASM package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release }}
+        run: |
+          gh release download "$RELEASE_TAG" --pattern benfan-web.zip
+          unzip -q benfan-web.zip -d site
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - uses: actions/deploy-pages@v5
+        id: deployment

@@ -1,0 +1,8 @@
+[wrap-git]
+directory=opus
+url=https://github.com/taisei-project/opus.git
+push-url=git@github.com:taisei-project/opus.git
+revision=taisei-1.6.1
+
+[provide]
+opus=opus_dep

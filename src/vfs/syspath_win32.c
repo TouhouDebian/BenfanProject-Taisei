@@ -1,0 +1,421 @@
+/*
+ * This software is licensed under the terms of the MIT License.
+ * See COPYING for further information.
+ * ---
+ * Copyright (c) 2011-2026, Lukas Weber <laochailan@web.de>.
+ * Copyright (c) 2012-2026, Andrei Alexeyev <akari@taisei-project.org>.
+ */
+
+#include "syspath.h"
+
+#include "memory/memory.h"
+#include "memory/scratch.h"
+#include "rwops/rwops_util.h"
+#include "util/strbuf.h"
+#include "util/stringops.h"
+
+#include <windows.h>
+#include <shlwapi.h>
+#include <SDL3/SDL.h>
+
+VFS_NODE_TYPE(VFSSysPathNode, {
+	char *path;
+	wchar_t *wpath;
+});
+
+char *vfs_syspath_separators = "\\/";
+
+static char *WIN_StringToUTF8(WCHAR *s) {
+	size_t slen = SDL_wcslen(s);
+	size_t utf16_size = (slen + 1) * sizeof(WCHAR);
+	size_t utf8_size = slen + 1;
+	char *temp = SDL_iconv_string("UTF-8", "UTF-16LE", (char*)s, utf16_size);
+	char *buf = memdup(temp, utf8_size);
+	SDL_free(temp);
+	return buf;
+}
+
+static WCHAR *WIN_UTF8ToString(char *s) {
+	size_t slen = strlen(s);
+	size_t utf16_size = (slen + 1) * sizeof(WCHAR);
+	size_t utf8_size = slen + 1;
+	WCHAR *temp = (void*)SDL_iconv_string("UTF-16LE", "UTF-8", s, utf8_size);
+	WCHAR *buf = memdup(temp, utf16_size);
+	SDL_free(temp);
+	return buf;
+}
+
+static VFSNode *vfs_syspath_create_internal(char *path);
+
+static void vfs_syspath_free(VFSNode *node) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	mem_free(pnode->path);
+	mem_free(pnode->wpath);
+}
+
+static void _vfs_set_error_win32(const char *file, int line) {
+	DWORD err = GetLastError();
+	LPVOID buf = NULL;
+
+	FormatMessage(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER |
+		FORMAT_MESSAGE_FROM_SYSTEM |
+		FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL,
+		err,
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		(LPWSTR)&buf,
+		0, NULL
+	);
+
+	char *errstr = WIN_StringToUTF8(buf);
+	LocalFree(buf);
+	vfs_set_error("Win32 error %lu: %s [%s:%i]", err, errstr, file, line);
+	mem_free(errstr);
+}
+
+#define vfs_set_error_win32() _vfs_set_error_win32(_TAISEI_SRC_FILE, __LINE__)
+
+static VFSInfo vfs_syspath_query(VFSNode *node) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	VFSInfo i = {};
+
+	if(!PathFileExists(pnode->wpath)) {
+		i.exists = false;
+		return i;
+	}
+
+	DWORD attrib = GetFileAttributes(pnode->wpath);
+
+	if(attrib == INVALID_FILE_ATTRIBUTES) {
+		vfs_set_error_win32();
+		return VFSINFO_ERROR;
+	}
+
+	i.exists = true;
+	i.is_dir = (bool)(attrib & FILE_ATTRIBUTE_DIRECTORY);
+
+	return i;
+}
+
+static SDL_IOStream *vfs_syspath_open(VFSNode *node, VFSOpenMode mode) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	mode &= VFS_MODE_RWMASK;
+	SDL_IOStream *rwops = SDL_IOFromFile(pnode->path, mode == VFS_MODE_WRITE ? "w" : "r");
+
+	if(!rwops) {
+		vfs_set_error_from_sdl();
+	} else {
+		auto props = SDL_GetIOProperties(rwops);
+		SDL_SetStringProperty(props, PROP_IOSTREAM_NAME, pnode->path);
+	}
+
+	return rwops;
+}
+
+static VFSNode *vfs_syspath_locate(VFSNode *node, const char *path) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+
+	StringBuffer buf = { acquire_scratch_arena() };
+	strbuf_cat(&buf, pnode->path);
+	strbuf_cat(&buf, "/");
+	strbuf_cat(&buf, path);
+	char *s = mem_strdup(buf.start);
+	release_scratch_arena(buf.arena);
+
+	return vfs_syspath_create_internal(s);
+}
+
+typedef struct VFSWin32IterData {
+	HANDLE search_handle;
+	char *last_result;
+} VFSWin32IterData;
+
+static const char* vfs_syspath_iter(VFSNode *node, void **opaque) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	VFSWin32IterData *idata;
+	WIN32_FIND_DATA fdata;
+	HANDLE search_handle;
+
+	if(!*opaque) {
+		StringBuffer buf = { acquire_scratch_arena() };
+		strbuf_cat(&buf, pnode->path);
+		strbuf_cat(&buf, "\\*.*");
+		wchar_t *wpattern = WIN_UTF8ToString(buf.start);
+		release_scratch_arena(buf.arena);
+		search_handle = FindFirstFile(wpattern, &fdata);
+		mem_free(wpattern);
+
+		if(search_handle == INVALID_HANDLE_VALUE) {
+			vfs_set_error_win32();
+			return NULL;
+		}
+
+		idata = ALLOC(VFSWin32IterData, {
+			.search_handle = search_handle,
+			.last_result = WIN_StringToUTF8(fdata.cFileName),
+		});
+		*opaque = idata;
+
+		if(!strcmp(idata->last_result, ".") || !strcmp(idata->last_result, "..")) {
+			return vfs_syspath_iter(node, opaque);
+		}
+
+		return idata->last_result;
+	}
+
+	idata = *opaque;
+	mem_free(idata->last_result);
+	idata->last_result = NULL;
+
+	if(FindNextFile(idata->search_handle, &fdata)) {
+		idata->last_result = WIN_StringToUTF8(fdata.cFileName);
+
+		if(!strcmp(idata->last_result, ".") || !strcmp(idata->last_result, "..")) {
+			return vfs_syspath_iter(node, opaque);
+		}
+
+		return idata->last_result;
+	}
+
+	if(GetLastError() != ERROR_NO_MORE_FILES) {
+		vfs_set_error_win32();
+	}
+
+	return NULL;
+}
+
+static void vfs_syspath_iter_stop(VFSNode *node, void **opaque) {
+	VFSWin32IterData *idata = *opaque;
+
+	if(idata) {
+		if(!FindClose(idata->search_handle)) {
+			vfs_set_error_win32();
+		}
+
+		mem_free(idata->last_result);
+		mem_free(idata);
+	}
+}
+
+static void vfs_syspath_repr(VFSNode *node, StringBuffer *buf) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	strbuf_printf(buf, "filesystem path (win32): %s", pnode->path);
+}
+
+static bool vfs_syspath_syspath(VFSNode *node, StringBuffer *buf) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	vfs_syspath_normalize_buffer(pnode->path, buf);
+	return true;
+}
+
+static bool vfs_syspath_mkdir(VFSNode *node, const char *subdir) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+
+	if(!subdir) {
+		subdir = "";
+	}
+
+	StringBuffer buf = { acquire_scratch_arena() };
+	strbuf_cat(&buf, pnode->path);
+	strbuf_cat(&buf, "\\");
+	strbuf_cat(&buf, subdir);
+	char *p = buf.start;
+	wchar_t *wp = WIN_UTF8ToString(p);
+	bool ok = CreateDirectory(wp, NULL);
+	DWORD err = GetLastError();
+
+	if(!ok && err == ERROR_ALREADY_EXISTS) {
+		VFSNode *n = vfs_locate(node, subdir);
+
+		if(n && vfs_node_query(n).is_dir) {
+			ok = true;
+		} else {
+			vfs_set_error("%s already exists, and is not a directory", p);
+		}
+
+		vfs_decref(n);
+	}
+
+	if(!ok) {
+		vfs_set_error("Can't create directory %s (win32 error: %lu)", p, err);
+	}
+
+	mem_free(wp);
+	release_scratch_arena(buf.arena);
+	return ok;
+}
+
+static const void *vfs_syspath_mmap(VFSNode *node, size_t *size) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+
+	HANDLE hfile = CreateFile(
+		pnode->wpath,
+		GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		NULL
+	);
+
+	if(hfile == INVALID_HANDLE_VALUE) {
+		vfs_set_error_win32();
+		return NULL;
+	}
+
+	LARGE_INTEGER fsize;
+	if(!GetFileSizeEx(hfile, &fsize)) {
+		vfs_set_error_win32();
+		CloseHandle(hfile);
+		return NULL;
+	}
+
+	if(fsize.QuadPart < 0 || (uint64_t)fsize.QuadPart > SIZE_MAX) {
+		vfs_set_error("%s: File is too large", pnode->path);
+		CloseHandle(hfile);
+		return NULL;
+	}
+
+	*size = (size_t)fsize.QuadPart;
+
+	HANDLE hmap = CreateFileMappingW(
+		hfile,
+		NULL,
+		PAGE_READONLY,
+		0,
+		0,   // use current file size
+		NULL
+	);
+
+	if(!hmap) {
+		vfs_set_error_win32();
+		CloseHandle(hfile);
+		return NULL;
+	}
+
+	void *addr = MapViewOfFile(
+		hmap,
+		FILE_MAP_READ,
+		0,
+		0,
+		0   // map from offset 0 to end
+	);
+
+	CloseHandle(hmap);
+	CloseHandle(hfile);
+
+	if(!addr) {
+		vfs_set_error_win32();
+		return NULL;
+	}
+
+	return addr;
+}
+
+static bool vfs_syspath_munmap(VFSNode *node, const void *addr, size_t size) {
+	UnmapViewOfFile(addr);
+	return true;
+}
+
+VFS_NODE_FUNCS(VFSSysPathNode, {
+	.repr = vfs_syspath_repr,
+	.query = vfs_syspath_query,
+	.free = vfs_syspath_free,
+	.locate = vfs_syspath_locate,
+	.syspath = vfs_syspath_syspath,
+	.iter = vfs_syspath_iter,
+	.iter_stop = vfs_syspath_iter_stop,
+	.mkdir = vfs_syspath_mkdir,
+	.open = vfs_syspath_open,
+	.mmap = vfs_syspath_mmap,
+	.munmap = vfs_syspath_munmap,
+});
+
+void vfs_syspath_normalize(char *buf, size_t bufsize, const char *path) {
+	// here we just remove redundant separators and convert forward slashes to back slashes.
+	// no need to bother with . and ..
+
+	// paths starting with two separators are a special case however (network shares)
+	// and are handled appropriately.
+
+	char *bufptr = buf;
+	const char *pathptr = path;
+	bool skip = false;
+
+	while(*pathptr && bufptr < (buf + bufsize - 1)) {
+		if(!skip) {
+			*bufptr++ = (*pathptr == '/' ? '\\' : *pathptr);
+		}
+
+		skip = (
+			strchr("/\\", pathptr[0]) &&
+			strchr("/\\", pathptr[1]) &&
+			(bufptr - buf > 1)
+		);
+
+		++pathptr;
+	}
+
+	*bufptr = 0;
+}
+
+static bool is_absolute(const char *path, size_t len) {
+	// starts with drive letter or path separator?
+	return
+		(len >= 1 && strchr(vfs_syspath_separators, path[0])) ||
+		(len >= 2 && path[1] == ':' && isalpha(path[0]));
+}
+
+void vfs_syspath_join(char *buf, size_t bufsize, const char *parent, const char *child) {
+	size_t l_parent = strlen(parent);
+	size_t l_child = strlen(child);
+	char sep = vfs_get_syspath_separator();
+	assert(bufsize >= l_parent + l_child + 2);
+
+	if(is_absolute(child, l_child)) {
+		memcpy(buf, child, l_child + 1);
+	} else {
+		memcpy(buf, parent, l_parent);
+		buf += l_parent;
+
+		if(l_parent && !strchr(vfs_syspath_separators, parent[l_parent - 1])) {
+			*buf++ = sep;
+		}
+
+		memcpy(buf, child, l_child + 1);
+	}
+}
+
+static bool vfs_syspath_validate(char *path) {
+	char *c = strchr(path, ':');
+
+	if(c && c == (path + 1) && isalpha(*path)) {
+		// drive letters are OK
+		c = strchr(c + 1, ':');
+	}
+
+	if(c) {
+		vfs_set_error("Path '%s' contains forbidden character ':'", path);
+		return false;
+	}
+
+	return true;
+}
+
+static VFSNode *vfs_syspath_create_internal(char *path) {
+	vfs_syspath_normalize_inplace(path);
+
+	if(!vfs_syspath_validate(path)) {
+		return NULL;
+	}
+
+	return &VFS_ALLOC(VFSSysPathNode, {
+		.path = path,
+		.wpath = WIN_UTF8ToString(path),
+	})->as_generic;
+}
+
+VFSNode *vfs_syspath_create(const char *path) {
+	return vfs_syspath_create_internal(mem_strdup(path));
+}

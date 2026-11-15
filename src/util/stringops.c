@@ -1,0 +1,345 @@
+/*
+ * This software is licensed under the terms of the MIT License.
+ * See COPYING for further information.
+ * ---
+ * Copyright (c) 2011-2026, Lukas Weber <laochailan@web.de>.
+ * Copyright (c) 2012-2026, Andrei Alexeyev <akari@taisei-project.org>.
+ */
+
+#include "stringops.h"
+#include "miscmath.h"
+#include "util/strbuf.h"
+
+#include <stdint.h>
+#include <string.h>
+
+bool strendswith(const char *s, const char *e) {
+	int ls = strlen(s);
+	int le = strlen(e);
+
+	if(le > ls)
+		return false;
+
+	return !strncmp(s+ls-le, e, le);
+}
+
+bool strstartswith(const char *s, const char *p) {
+	int ls = strlen(s);
+	int lp = strlen(p);
+
+	if(ls < lp)
+		return false;
+
+	return !strncmp(s, p, lp);
+}
+
+bool strendswith_any(const char *s, const char **earray) {
+	for(const char **e = earray; *e; ++e) {
+		if(strendswith(s, *e)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool strstartswith_any(const char *s, const char **earray) {
+	for(const char **e = earray; *e; ++e) {
+		if(strstartswith(s, *e)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void stralloc(char **dest, const char *src) {
+	mem_free(*dest);
+	*dest = src ? mem_strdup(src) : NULL;
+}
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+	#define UCS4_ID "UCS-4BE"
+#else
+	#define UCS4_ID "UCS-4LE"
+#endif
+
+uint32_t* ucs4chr(const uint32_t *ucs4, uint32_t chr) {
+	for(; *ucs4 != chr; ++ucs4) {
+		if(!*ucs4) {
+			return NULL;
+		}
+	}
+
+	return (uint32_t*)ucs4;
+}
+
+size_t ucs4len(const uint32_t *ucs4) {
+	size_t len;
+	for(len = 0; *ucs4; ++len, ++ucs4);
+	return len;
+}
+
+size_t utf8_to_ucs4(const char *utf8, size_t bufsize, uint32_t buf[bufsize]) {
+	uint32_t *bufptr = buf;
+	assert(bufsize > 0);
+
+	while(*utf8) {
+		*bufptr++ = SDL_StepUTF8(&utf8, NULL);
+		assert(bufptr < buf + bufsize);
+	}
+
+	*bufptr++ = 0;
+	return bufptr - buf - 1;
+}
+
+int ucs4_to_utf8(size_t ucs4_len, const uint32_t *ucs4, StringBuffer *buf) {
+	int len = 0;
+
+	// optimistic guess: best case-encoding (1 byte per codepoint) + final null
+	strbuf_reserve(buf, ucs4_len + 1);
+
+	for(uint i = 0; i < ucs4_len; ++i) {
+		// enough for worse-case encoding (4 bytes) + final null
+		strbuf_reserve(buf, 5);
+		const char *oldpos = buf->pos;
+		buf->pos = SDL_UCS4ToUTF8(ucs4[i], buf->pos);
+		len += buf->pos - oldpos;
+	}
+
+	*buf->pos = 0;
+	assert(len == strlen(buf->start));
+	return len;
+}
+
+#ifndef TAISEI_BUILDCONF_HAVE_STRTOK_R
+/*
+ * public domain strtok_r() by Charlie Gordon
+ *
+ *   from comp.lang.c  9/14/2007
+ *
+ *      http://groups.google.com/group/comp.lang.c/msg/2ab1ecbb86646684
+ *
+ *     (Declaration that it's public domain):
+ *      http://groups.google.com/group/comp.lang.c/msg/7c7b39328fefab9c
+ */
+char *strtok_r(char *str, const char *delim, char **nextp) {
+	char *ret;
+
+	if(str == NULL) {
+		str = *nextp;
+	}
+
+	str += strspn(str, delim);
+
+	if(*str == '\0') {
+		return NULL;
+	}
+
+	ret = str;
+	str += strcspn(str, delim);
+
+	if(*str) {
+		*str++ = '\0';
+	}
+
+	*nextp = str;
+	return ret;
+}
+#endif
+
+size_t filename_timestamp(char *buf, size_t buf_size, SystemTime systime) {
+	assert(buf_size >= FILENAME_TIMESTAMP_MIN_BUF_SIZE);
+
+	char buf_msecs[4];
+	char buf_datetime[FILENAME_TIMESTAMP_MIN_BUF_SIZE - sizeof(buf_msecs)];
+	attr_unused size_t written;
+
+	written = snprintf(buf_msecs, sizeof(buf_msecs), "%03u", (uint)(systime.tv_nsec / 1000000));
+	assert(written == sizeof(buf_msecs) - 1);
+	written = strftime(buf_datetime, sizeof(buf_datetime), "%Y%m%d_%H-%M-%S", localtime(&systime.tv_sec));
+	assert(written != 0);
+
+	return snprintf(buf, buf_size, "%s-%s", buf_datetime, buf_msecs);
+}
+
+void format_huge_num(uint digits, uint64_t num, size_t bufsize, char buf[bufsize]) {
+	if(digits == 0) {
+		digits = digitcnt(num);
+	}
+
+	num = min(upow10(digits) - 1, num);
+
+	div_t separators = div(digits, 3);
+	attr_unused uint len = digits + (separators.quot + !!separators.rem);
+	assert(bufsize >= len);
+
+	char *p = buf;
+
+	// WARNING: i must be signed here
+	for(int i = 0; i < digits; ++i) {
+		if(i && !((i - separators.rem) % 3)) {
+			*p++ = ',';
+		}
+
+		uint64_t divisor = upow10(digits - i - 1);
+		*p++ = '0' + num / divisor;
+		num %= divisor;
+	}
+
+	*p = 0;
+	assert(p == buf + len - 1);
+}
+
+void hexdigest(const uint8_t *input, size_t input_size, char *output, size_t output_size) {
+	assert(output_size > input_size * 2);
+
+	static char charmap[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+	const uint8_t *end = input + input_size;
+
+	while(input < end) {
+		uint8_t byte = *input++;
+		*output++ = charmap[byte >> 4];
+		*output++ = charmap[byte & 0xf];
+	}
+
+	*output = 0;
+}
+
+void expand_escape_sequences(char *str) {
+	bool in_escape = false;
+	char *p = str;
+
+	for(p = str; *p; ++p) {
+		if(in_escape) {
+			switch(*p) {
+				case 'n': p[-1] = '\n'; break;
+				case 't': p[-1] = '\t'; break;
+				case 'r': p[-1] = '\r'; break;
+				default:  p[-1] =   *p; break;
+			}
+
+			memmove(p, p + 1, strlen(p + 1) + 1);
+			--p;
+			in_escape = false;
+		} else if(*p == '\\') {
+			in_escape = true;
+		}
+	}
+
+	if(in_escape) {
+		p[-1] = 0;
+	}
+}
+
+#ifndef TAISEI_BUILDCONF_HAVE_MEMRCHR
+void *memrchr(const void *s, int c, size_t n) {
+	const char *mem = s;
+
+	for(const char *p = mem + n - 1; p >= mem; --p) {
+		if(*p == c) {
+			return (void*)p;
+		}
+	}
+
+	return NULL;
+}
+#endif
+
+#ifndef TAISEI_BUILDCONF_HAVE_MEMMEM
+#undef memmem
+#define memmem _ts_memmem
+void *memmem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen) {
+	const char *p_haystack = haystack;
+	const char *e_haystack = p_haystack + haystacklen;
+
+	for(;;) {
+		if(needlelen > e_haystack - p_haystack) {
+			return NULL;
+		}
+
+		if(!memcmp(p_haystack, needle, needlelen)) {
+			return (void*)p_haystack;
+		}
+
+		++p_haystack;
+	}
+}
+#endif
+
+bool strnmatch(size_t globsize, const char glob[globsize], size_t insize, const char input[insize]) {
+	const char *ip = input;
+	const char *iend = input + insize;
+	const char *gp = glob;
+	const char *gend = glob + globsize;
+
+	int isfirst = 1;
+	int islast = 0;
+
+	for(;;) {
+		assert(!islast);
+
+		if(gp > gend) {
+			break;
+		}
+
+		const char *segment_start = gp;
+		const char *segment_end = memchr(segment_start, '*', gend - segment_start);
+
+		if(!segment_end) {
+			segment_end = gend;
+			islast = 1;
+		}
+
+		size_t segment_len = segment_end - segment_start;
+
+		if(segment_len < 1) {
+			if(islast) {
+				// Pattern ends with a * and we matched everything up to that point.
+				return 1;
+			}
+		} else {
+			// If this is the first segment, match at the start of input.
+			// Else search input for the first occurrence of the segment (lazy match).
+
+			if(isfirst) {
+				if(iend - ip < segment_len) {
+					// input shorter than pattern; can't possibly match
+					return 0;
+				}
+
+				if(memcmp(ip, segment_start, segment_len)) {
+					return 0;
+				}
+			} else if(!(ip = memmem(ip, iend - ip, segment_start, segment_len))) {
+				return 0;
+			}
+
+			ip += segment_len;
+		}
+
+		isfirst = 0;
+		gp += segment_len + 1;
+
+		if(islast) {
+			if(iend - ip == 0) {
+				// perfect match
+				return 1;
+			}
+
+			// Try to match the last pattern "greedily"
+			// So that e.g. a pattern like "start_*_end" can match "start_123_end_123_end"
+			if(iend - ip >= segment_len && !memcmp(iend - segment_len, segment_start, segment_len)) {
+				return 1;
+			}
+
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
+bool strmatch(const char *glob, const char *input) {
+	return strnmatch(strlen(glob), glob, strlen(input), input);
+}

@@ -1,0 +1,253 @@
+/*
+ * This software is licensed under the terms of the MIT License.
+ * See COPYING for further information.
+ * ---
+ * Copyright (c) 2011-2026, Lukas Weber <laochailan@web.de>.
+ * Copyright (c) 2012-2026, Andrei Alexeyev <akari@taisei-project.org>.
+ */
+
+#include "syspath.h"
+
+#include "memory/memory.h"
+#include "memory/scratch.h"
+#include "rwops/rwops_util.h"
+#include "util/strbuf.h"
+#include "util/stringops.h"
+
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+VFS_NODE_TYPE(VFSSysPathNode, {
+	char *path;
+});
+
+char *vfs_syspath_separators = "/";
+
+static VFSNode *vfs_syspath_create_internal(char *path);
+
+static void vfs_syspath_free(VFSNode *node) {
+	mem_free(VFS_NODE_CAST(VFSSysPathNode, node)->path);
+}
+
+static VFSInfo vfs_syspath_query(VFSNode *node) {
+	struct stat fstat;
+	VFSInfo i = {};
+
+	if(stat(VFS_NODE_CAST(VFSSysPathNode, node)->path, &fstat) >= 0) {
+		i.exists = true;
+		i.is_dir = S_ISDIR(fstat.st_mode);
+	}
+
+	return i;
+}
+
+static SDL_IOStream *vfs_syspath_open(VFSNode *node, VFSOpenMode mode) {
+	mode &= VFS_MODE_RWMASK;
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	SDL_IOStream *io = SDL_IOFromFile(pnode->path, mode == VFS_MODE_WRITE ? "w" : "r");
+
+	if(!io) {
+		vfs_set_error_from_sdl();
+	} else {
+		auto props = SDL_GetIOProperties(io);
+		SDL_SetStringProperty(props, PROP_IOSTREAM_NAME, pnode->path);
+	}
+
+	return io;
+}
+
+static VFSNode *vfs_syspath_locate(VFSNode *node, const char *path) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+
+	StringBuffer buf = { acquire_scratch_arena() };
+	strbuf_cat(&buf, pnode->path);
+	strbuf_cat(&buf, "/");
+	strbuf_cat(&buf, path);
+	char *s = mem_strdup(buf.start);
+	release_scratch_arena(buf.arena);
+
+	return vfs_syspath_create_internal(s);
+}
+
+static const char *vfs_syspath_iter(VFSNode *node, void **opaque) {
+	DIR *dir;
+	struct dirent *e;
+
+	if(!*opaque) {
+		*opaque = opendir(VFS_NODE_CAST(VFSSysPathNode, node)->path);
+	}
+
+	if(!(dir = *opaque)) {
+		return NULL;
+	}
+
+	do {
+		e = readdir(dir);
+	} while(e && (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")));
+
+	if(e) {
+		return e->d_name;
+	}
+
+	closedir(dir);
+	*opaque = NULL;
+	return NULL;
+}
+
+static void vfs_syspath_iter_stop(VFSNode *node, void **opaque) {
+	if(*opaque) {
+		closedir((DIR*)*opaque);
+		*opaque = NULL;
+	}
+}
+
+static void vfs_syspath_repr(VFSNode *node, StringBuffer *buf) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	strbuf_printf(buf, "filesystem path (posix): %s", pnode->path);
+}
+
+static bool vfs_syspath_syspath(VFSNode *node, StringBuffer *buf) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	vfs_syspath_normalize_buffer(pnode->path, buf);
+	return true;
+}
+
+static bool vfs_syspath_mkdir(VFSNode *node, const char *subdir) {
+	if(!subdir) {
+		subdir = "";
+	}
+
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+
+	StringBuffer buf = { acquire_scratch_arena() };
+	strbuf_cat(&buf, pnode->path);
+	strbuf_cat(&buf, "/");
+	strbuf_cat(&buf, subdir);
+
+	char *p = strbuf_commit(&buf);
+	bool ok = !mkdir(p, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+
+	if(!ok && errno == EEXIST) {
+		VFSNode *n = vfs_locate(node, subdir);
+
+		if(n && vfs_node_query(n).is_dir) {
+			ok = true;
+		} else {
+			vfs_set_error("%s already exists, and is not a directory", p);
+		}
+
+		vfs_decref(n);
+	}
+
+	if(!ok) {
+		vfs_set_error("Can't create directory %s (errno: %i)", p, errno);
+	}
+
+	release_scratch_arena(buf.arena);
+	return ok;
+}
+
+static const void *vfs_syspath_mmap(VFSNode *node, size_t *size) {
+	auto pnode = VFS_NODE_CAST(VFSSysPathNode, node);
+	struct stat statbuf;
+	int fd = open(pnode->path, O_RDONLY);
+
+	if(fd < 0) {
+		vfs_set_error("%s: open() failed: %s", pnode->path, strerror(errno));
+		return NULL;
+	}
+
+	if(fstat(fd, &statbuf) < 0) {
+		vfs_set_error("%s: fstat() failed: %s", pnode->path, strerror(errno));
+		close(fd);
+		return NULL;
+	}
+
+	*size = statbuf.st_size;
+	void *addr = mmap(NULL, *size, PROT_READ, MAP_PRIVATE, fd, 0);
+
+	if(!addr || addr == MAP_FAILED) {
+		vfs_set_error("%s: mmap() failed: %s", pnode->path, strerror(errno));
+		close(fd);
+		return NULL;
+	}
+
+	close(fd);
+	return addr;
+}
+
+static bool vfs_syspath_munmap(VFSNode *node, const void *addr, size_t size) {
+	if(munmap((void*)addr, size) < 0) {
+		vfs_set_error("munmap() failed: %s", strerror(errno));
+		return false;
+	}
+
+	return true;
+}
+
+VFS_NODE_FUNCS(VFSSysPathNode, {
+	.repr = vfs_syspath_repr,
+	.query = vfs_syspath_query,
+	.free = vfs_syspath_free,
+	.locate = vfs_syspath_locate,
+	.syspath = vfs_syspath_syspath,
+	.iter = vfs_syspath_iter,
+	.iter_stop = vfs_syspath_iter_stop,
+	.mkdir = vfs_syspath_mkdir,
+	.open = vfs_syspath_open,
+	.mmap = vfs_syspath_mmap,
+	.munmap = vfs_syspath_munmap,
+});
+
+void vfs_syspath_normalize(char *buf, size_t bufsize, const char *path) {
+	char *bufptr = buf;
+	const char *pathptr = path;
+	bool skip = false;
+
+	while(*pathptr && bufptr < (buf + bufsize - 1)) {
+		if(!skip) {
+			*bufptr++ = *pathptr;
+		}
+
+		skip = (pathptr[0] == '/' && pathptr[1] == '/');
+		++pathptr;
+	}
+
+	*bufptr = 0;
+}
+
+void vfs_syspath_join(char *buf, size_t bufsize, const char *parent, const char *child) {
+	size_t l_parent = strlen(parent);
+	size_t l_child = strlen(child);
+	char sep = vfs_get_syspath_separator();
+	assert(bufsize >= l_parent + l_child + 2);
+
+	if(child[0] == sep) {
+		memcpy(buf, child, l_child + 1);
+	} else {
+		memcpy(buf, parent, l_parent);
+		buf += l_parent;
+
+		if(l_parent && parent[l_parent - 1] != sep) {
+			*buf++ = sep;
+		}
+
+		memcpy(buf, child, l_child + 1);
+	}
+}
+
+static VFSNode *vfs_syspath_create_internal(char *path) {
+	vfs_syspath_normalize_inplace(path);
+	return &VFS_ALLOC(VFSSysPathNode, {
+		.path = path,
+	})->as_generic;
+}
+
+VFSNode *vfs_syspath_create(const char *path) {
+	return vfs_syspath_create_internal(mem_strdup(path));
+}

@@ -1,0 +1,26 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>奔饭 Project · 试玩</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#111d24;color:#e8edf0;font:15px system-ui,sans-serif}header{padding:10px 20px;display:flex;justify-content:space-between;background:#1a2b33}a{color:#a5d9e5}#status{text-align:center;padding:15px;color:#edcb83}canvas{display:block;margin:auto;width:min(100vw,1000px);height:auto;max-height:82vh;object-fit:contain;outline:0}#help{text-align:center;color:#acbdc6;padding:8px}details{margin:15px}pre{white-space:pre-wrap;font-size:11px;max-height:180px;overflow:auto}#touch{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}button{padding:15px;border:1px solid #52646b;border-radius:8px;background:#243b44;color:white;touch-action:none;user-select:none}@media(pointer:fine){#touch{display:none}}</style>
+<header><a href="index.html">← 返回角色与关卡选择</a><span id="title">奔饭 Project</span><button id="fullscreen">全屏</button></header>
+<div id="status">正在加载泰西 WebAssembly 引擎…</div><canvas id="canvas" width="800" height="600" tabindex="0" oncontextmenu="event.preventDefault()"></canvas><div id="help">方向键移动 · Shift 慢行 · Z 射击／确认 · X 借过 · Esc 暂停</div>
+<div id="touch"><button data-code="ArrowLeft">←</button><button data-code="ArrowUp">↑</button><button data-code="ArrowDown">↓</button><button data-code="ArrowRight">→</button><button data-code="ShiftLeft">慢行</button><button data-code="KeyZ">Z 确认/射击</button><button data-code="KeyX">借过</button><button data-code="Escape">暂停</button></div><details><summary>运行日志</summary><pre id="log"></pre></details>
+<script src="mode.js"></script><script>
+const params=new URLSearchParams(location.search),roleNames=['international','senior1','senior2','senior3'];
+const role=Math.max(0,Math.min(3,Number(params.get('role'))||0));
+const stage=Math.max(0,Math.min(7,Number(params.get('stage'))||0));
+const diff=Math.max(1,Math.min(4,Number(params.get('diff'))||1));
+const rule=window.BENFAN_RULE===1?1:0,canvas=document.querySelector('canvas'),status=document.querySelector('#status'),log=document.querySelector('#log');
+document.querySelector('#title').textContent='奔饭 Project · '+(rule?'避让版':'射击版');
+function output(...args){let s=args.join(' ');log.textContent=(log.textContent+'\n'+s).slice(-60000);console.log(s)}
+window.addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault()});
+document.querySelector('#fullscreen').onclick=()=>canvas.requestFullscreen();
+const keys={ArrowLeft:[37,'ArrowLeft'],ArrowRight:[39,'ArrowRight'],ArrowUp:[38,'ArrowUp'],ArrowDown:[40,'ArrowDown'],ShiftLeft:[16,'Shift'],KeyZ:[90,'z'],KeyX:[88,'x'],Escape:[27,'Escape']};
+for(const b of document.querySelectorAll('[data-code]')){const code=b.dataset.code,[keyCode,key]=keys[code];const send=type=>{canvas.focus();canvas.dispatchEvent(new KeyboardEvent(type,{code,key,keyCode,which:keyCode,bubbles:true}))};b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);send('keydown')};b.onpointerup=b.onpointercancel=b.onlostpointercapture=()=>send('keyup')}
+(async()=>{try{const gl=canvas.getContext('webgl2',{alpha:false,antialias:false,depth:false,premultipliedAlpha:true,preserveDrawingBuffer:false,stencil:false});if(!gl)throw Error('需要支持 WebGL 2 的浏览器');
+const script=document.createElement('script');script.src='taisei.js';await new Promise((resolve,reject)=>{script.onload=resolve;script.onerror=reject;document.body.append(script)});
+const config={canvas,preinitializedWebGLContext:gl,print:output,printErr:output,setStatus:s=>status.textContent=s,
+preRun:[m=>{const E=m.ENV;E.TAISEI_BENFAN_RULE=String(rule);E.TAISEI_BENFAN_CHARACTER=String(role);E.TAISEI_BENFAN_DIFFICULTY=String(diff);E.TAISEI_BENFAN_AUTOSTART='1';E.TAISEI_BENFAN_STAGE=String(stage);}],
+onFirstFrame:()=>{window.benfanReady=true;status.textContent='';canvas.focus()},onAbort:reason=>{window.benfanError=String(reason);status.textContent='运行失败：'+reason}};
+window.benfan=await createTaisei(config);benfan.initFilesystem();
+benfan.callMain([]);
+}catch(e){window.benfanError=String(e);status.textContent='加载失败：'+e;console.error(e)}})();
+</script></html>

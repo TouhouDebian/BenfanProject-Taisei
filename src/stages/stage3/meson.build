@@ -1,0 +1,15 @@
+stage3_src = files(
+    'background_anim.c',
+    'wriggle.c',
+    'scuttle.c',
+    'draw.c',
+    'nonspells/boss_nonspells.c',
+    'nonspells/midboss_nonspell_1.c',
+    'spells/firefly_storm.c',
+    'spells/light_singularity.c',
+    'spells/logic_bomb.c',
+    'spells/moonlight_rocket.c',
+    'spells/moths_to_a_flame.c',
+    'stage3.c',
+    'timeline.c',
+)

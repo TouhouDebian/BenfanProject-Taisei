@@ -1,0 +1,67 @@
+/*
+ * This software is licensed under the terms of the MIT License.
+ * See COPYING for further information.
+ * ---
+ * Copyright (c) 2011-2026, Lukas Weber <laochailan@web.de>.
+ * Copyright (c) 2012-2026, Andrei Alexeyev <akari@taisei-project.org>.
+ */
+
+#pragma once
+#include "taisei.h"
+
+#include "stageinfo.h"
+#include "stageutils.h"
+#include "util/fbpair.h"
+
+enum {
+	NUM_STARS = 400
+};
+
+typedef struct Stage6DrawData {
+	struct {
+		vec3 position[NUM_STARS];
+	} stars;
+
+	struct {
+		float angular_velocity;
+		float radius;
+	} stair_ascent;
+
+	struct {
+		Framebuffer *aux_fb;
+		FBPair fbpair;
+	} baryon;
+
+	BoxedTask boss_rotation;
+
+	struct {
+		PBRModel rim;
+		PBRModel spires;
+		PBRModel stairs;
+		PBRModel tower;
+		PBRModel tower_bottom;
+		PBRModel floor;
+
+		// these don't use pbr materials
+		Model *calabi_yau_quintic;
+	} models;
+
+	Texture *envmap;
+} Stage6DrawData;
+
+extern ShaderRule stage6_bg_effects[];
+
+Stage6DrawData* stage6_get_draw_data(void);
+
+void stage6_drawsys_init(void);
+void stage6_drawsys_shutdown(void);
+void stage6_draw(void);
+
+extern ShaderRule stage6_bg_effects[];
+extern ShaderRule stage6_postprocess[];
+
+void elly_spellbg_toe(Boss*, int);
+void elly_spellbg_modern_dark(Boss*, int);
+void elly_spellbg_modern(Boss*, int);
+void elly_spellbg_classic(Boss*, int);
+void elly_global_rule(Boss*, int);

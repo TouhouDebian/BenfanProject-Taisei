@@ -1,0 +1,26 @@
+build/
+build-release/
+winbuild/
+osxbuild/
+releases/
+emsdk/
+.ctagsdb
+.*DS_Store
+__pycache__
+*.out
+*.kdev4
+.kdev4/
+*.kate-swp
+*~
+*-autosave.kra
+*.swp
+.VERSION
+subprojects/.wraplock
+
+# Local Benfan builds and user data
+build-*/
+dist-*/
+.tools/
+.site/
+.benfan*/
+misc/ci/benfan-emscripten.ini

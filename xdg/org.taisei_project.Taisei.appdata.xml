@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+	<id>org.taisei_project.Taisei</id>
+	<launchable type="desktop-id">org.taisei_project.Taisei.desktop</launchable>
+	<project_license>MIT and CC-BY-4.0 and CC0-1.0</project_license>
+	<metadata_license>CC0-1.0</metadata_license>
+	<name>Taisei Project</name>
+	<summary>Bullet hell shoot 'em up game set in the Tōhō universe</summary>
+	<description>
+		<p>Taisei (泰西, lit. Occident) is a free and open-source fangame of the Tōhō series.</p>
+		<p>Basically, it is a shoot ’em up game with lots of bullets (the genre is literally called bullet hell). It doesn’t aim to rebuild a particular installment of the Tōhō games, but is rather an original game set in the world of Tōhō. Enjoy dodging through 6 stages full of new bullet patterns on four difficulty levels!</p>
+	</description>
+	<developer_name>Taisei Project Team</developer_name>
+	<keywords>
+		<keyword>bullet hell</keyword>
+		<keyword>danmaku</keyword>
+		<keyword>game</keyword>
+		<keyword>shmup</keyword>
+		<keyword>touhou</keyword>
+	</keywords>
+	<provides>
+		<binary>taisei</binary>
+	</provides>
+	<url type="homepage">https://taisei-project.org</url>
+	<url type="bugtracker">https://github.com/taisei-project/taisei/issues</url>
+	<url type="help">https://github.com/taisei-project/taisei/blob/v1.4.5/doc/GAME.rst</url>
+	<screenshots>
+		<screenshot type="default">
+			<image>https://taisei-project.org/static/screenshots/009_1.4/taisei_20230908_01-32-03-510.png</image>
+		</screenshot>
+		<screenshot>
+			<image>https://taisei-project.org/static/screenshots/009_1.4/taisei_20230908_01-34-30-656.png</image>
+		</screenshot>
+		<screenshot>
+			<image>https://taisei-project.org/static/screenshots/009_1.4/taisei_20230908_01-39-12-483.png</image>
+		</screenshot>
+		<screenshot>
+			<image>https://taisei-project.org/static/screenshots/009_1.4/taisei_20230908_01-48-08-312.png</image>
+		</screenshot>
+	</screenshots>
+	<releases>
+		<release version="1.4.5" date="2026-07-03">
+			<url>https://taisei-project.org/news/0022_v1.4.5</url>
+			<description>
+				<p>This is a stable maintenance release. It adds localization, updates to some menus, and various fixes.</p>
+			</description>
+		</release>
+		<release version="1.4.4" date="2025-07-12">
+			<url>https://taisei-project.org/news/0021_v1.4.4</url>
+			<description>
+				<p>This is a stable maintenance release. It fixes a few regressions introduced in v1.4.3.</p>
+			</description>
+		</release>
+		<release version="1.4.3" date="2025-07-10">
+			<url>https://taisei-project.org/news/0020_v1.4.3</url>
+			<description>
+				<p>This is a stable maintenance release. It has some important bugfixes and features backported from the v1.5 development tree.</p>
+			</description>
+		</release>
+		<release version="1.4.2" date="2024-10-08">
+			<url>https://taisei-project.org/news/0018_v1.4.2</url>
+			<description>
+				<p>This is a stable maintenance release. It has some bugfixes, optimizations, and features backported from the v1.5 development tree.</p>
+			</description>
+		</release>
+		<release version="1.4.1" date="2024-03-11">
+			<url>https://taisei-project.org/news/0017_v1.4.1</url>
+			<description>
+				<p>This is a stable maintenance release. It features some bugfixes and optimizations backported from the v1.5 development tree.</p>
+			</description>
+		</release>
+		<release version="1.4" date="2023-09-08">
+			<url>https://taisei-project.org/news/0016_v1.4</url>
+			<description>
+				<p>This is a major release, with substantially redesigned stages and bosses, new story, new backgrounds, and heavy internal rewrites.</p>
+			</description>
+		</release>
+		<release version="1.3.1" date="2019-09-29">
+			<url>https://taisei-project.org/news/0012_v1.3.1</url>
+			<description>
+				<p>This is a stable maintenance release. It features some important bug fixes and a few optimizations and visual improvements backported from the v1.4 development tree, as well as new character art.</p>
+			</description>
+		</release>
+		<release version="1.3.0" date="2019-04-27">
+			<url>https://taisei-project.org/news/0011_v1.3</url>
+			<description>
+				<p>This is another major release. Includes lots of graphical updates, a completely rewritten renderer, a new playable character (guess who!), a new scoring mechanic, and lots of various other changes.</p>
+			</description>
+		</release>
+		<release version="1.2.0" date="2018-01-27">
+			<url>https://taisei-project.org/news/0010_v1.2</url>
+			<description>
+				<p>This is a major release. There are lots of changes, including a complete all-original soundtrack, new graphics, sound effects, vast gameplay improvements, and much more!</p>
+			</description>
+		</release>
+		<release version="1.1.2" date="2017-11-20">
+			<url>https://taisei-project.org/news/0009_v1.1.2</url>
+			<description>
+				<p>This is a stable maintenance release. It contains mostly bug fixes backported from the v1.2 development tree. There are no gameplay changes; this version should be 100% replay compatible with the initial v1.1 release.</p>
+			</description>
+		</release>
+		<release version="1.1.1" date="2017-10-28">
+			<url>https://taisei-project.org/news/0008_v1.1.1</url>
+			<description>
+				<p>This is a stable maintenance release. It includes many bugfixes and some new features backported from the v1.2 development tree. There are no gameplay changes; this version should be 100% replay compatible with the initial v1.1 release.</p>
+			</description>
+		</release>
+		<release version="1.1.0" date="2017-09-25">
+			<url>https://taisei-project.org/news/0007_v1.1</url>
+			<description>
+				<p>Taisei 1.1 contains gameplay and stage changes, new extra spells, many graphics improvements, a new resource system, replay improvements and more.</p>
+			</description>
+		</release>
+	</releases>
+	<content_rating type="oars-1.0">
+		<content_attribute id="language-profanity">mild</content_attribute>
+		<content_attribute id="language-humor">mild</content_attribute>
+	</content_rating>
+	<update_contact>akari@taisei-project.org</update_contact>
+</component>
